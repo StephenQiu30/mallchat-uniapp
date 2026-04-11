@@ -1,0 +1,78 @@
+/* 全局样式规范，基于 TDesign 风格优化 */
+
+:root {
+  /* TDesign 品牌色覆盖 */
+  --td-brand-color: #0052D9;
+  --td-brand-color-light: #E1EFFF;
+  --td-brand-color-focus: #1890FF;
+  
+  /* 应用基础颜色 */
+  --app-bg-color: #F6F7F9;
+  --app-text-primary: #1F2937;
+  --app-text-secondary: #6B7280;
+  --app-text-placeholder: #9CA3AF;
+  
+  /* 圆角规范 */
+  --app-radius-xl: 32rpx;
+  --app-radius-lg: 24rpx;
+  --app-radius-md: 16rpx;
+}
+
+page {
+  background-color: var(--app-bg-color);
+  color: var(--app-text-primary);
+  /* 使用系统字体栈 */
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Segoe UI, Arial, Roboto, "PingFang SC", "miui", "Hiragino Sans GB", "Microsoft Yahei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 通用容器 */
+.container {
+  padding: 0 32rpx;
+}
+
+/* 渐变文本（用于点睛之笔） */
+.text-gradient {
+  background: linear-gradient(to right, #0052D9, #1890FF);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* 隐藏滚动条 */
+.no-scrollbar ::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+  color: transparent;
+}
+
+/* 全局交互动效 */
+.active-opacity:active {
+  opacity: 0.7;
+}
+
+.active-scale:active {
+  transform: scale(0.98);
+  transition: transform 0.1s ease;
+}
+
+/* 聊天气泡全局基础样式 */
+.chat-bubble {
+  padding: 24rpx;
+  font-size: 30rpx;
+  line-height: 1.5;
+  border-radius: 20rpx;
+  max-width: 100%;
+}
+
+.chat-bubble-peer {
+  background-color: #fff;
+  border-top-left-radius: 4rpx;
+  color: var(--app-text-primary);
+}
+
+.chat-bubble-self {
+  background-color: var(--td-brand-color);
+  border-top-right-radius: 4rpx;
+  color: #fff;
+}
