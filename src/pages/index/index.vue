@@ -1,6 +1,6 @@
 <template>
   <view class="message-page">
-    <!-- 顶部搜素栏：置于原生导航栏之下 -->
+    <!-- 搜索栏 -->
     <view class="search-section">
       <t-search
         v-model="searchKeyword"
@@ -11,107 +11,233 @@
       />
     </view>
 
-    <!-- 消息列表区 -->
-    <scroll-view scroll-y class="message-scroll">
+    <!-- 消息列表 -->
+    <scroll-view
+      scroll-y
+      class="message-scroll"
+      refresher-enabled
+      :refresher-triggered="refreshing"
+      @refresherrefresh="onRefresh"
+    >
       <view class="list-container">
         <t-cell-group :border="false">
           <t-cell
-            v-for="(chat, index) in chatList"
-            :key="chat.id"
-            :title="chat.title"
-            :description="chat.lastMsg"
-            @click="goToChat(chat)"
+            v-for="session in filteredSessions"
+            :key="session.roomId"
+            :title="session.name"
+            :description="session.lastMessage"
+            @click="goToChat(session)"
+            @longpress="onLongPress(session)"
             hover
             class="chat-cell"
           >
-            <!-- 左侧头像：如果是群聊则展示渐变背景或组合头像 -->
             <template #left-icon>
               <view class="avatar-wrapper">
-                <t-avatar 
-                  :image="chat.avatar" 
-                  size="96rpx" 
-                  shape="round" 
+                <t-avatar
+                  :image="session.avatar"
+                  size="96rpx"
+                  shape="round"
                 />
-                <!-- 未读数 -->
-                <view v-if="chat.unread" class="badge-accent">
-                  <t-badge 
-                    :count="chat.unread === 'dot' ? 0 : chat.unread" 
-                    :dot="chat.unread === 'dot'"
-                  />
+                <view v-if="session.unreadCount && session.unreadCount > 0" class="badge-accent">
+                  <t-badge :count="session.unreadCount" />
                 </view>
               </view>
             </template>
 
-            <!-- 右侧摘要/时间 -->
             <template #note>
               <view class="chat-note">
-                <text class="time-text">{{ chat.time }}</text>
-                <t-icon v-if="chat.muted" name="notification-off" size="32rpx" color="#bbb" />
+                <text class="time-text">{{ formatTime(session.activeTime) }}</text>
+                <t-icon
+                  v-if="session.topStatus === 1"
+                  name="notification-off"
+                  size="32rpx"
+                  color="#bbb"
+                />
               </view>
             </template>
           </t-cell>
         </t-cell-group>
+
+        <!-- 空状态 -->
+        <view v-if="!loading && filteredSessions.length === 0" class="empty-state">
+          <t-icon name="chat" size="120rpx" color="#ccc" />
+          <text class="empty-text">暂无消息</text>
+        </view>
+
+        <!-- 加载状态 -->
+        <view v-if="loading" class="loading-state">
+          <t-loading size="40rpx" />
+        </view>
       </view>
-      
-      <!-- 底部留白 -->
+
       <view class="safe-area-bottom" />
     </scroll-view>
+
+    <!-- 长按操作菜单 -->
+    <t-action-sheet
+      v-model:visible="showActionSheet"
+      :actions="actionSheetActions"
+      @selected="onActionSelected"
+    />
   </view>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, computed, onMounted } from 'vue'
+import { onShow } from '@dcloudio/uni-app'
+import chatApi from '@/api/chat'
+import { wsManager, WsMessageType } from '@/services/websocket'
 
-const searchKeyword = ref('');
+const searchKeyword = ref('')
+const sessions = ref<ChatAPI.ChatSessionVO[]>([])
+const loading = ref(false)
+const refreshing = ref(false)
+const showActionSheet = ref(false)
+const selectedSession = ref<ChatAPI.ChatSessionVO | null>(null)
 
-const chatList = ref([
-  {
-    id: 1,
-    title: 'MallChat 项目组',
-    lastMsg: '小李：那个 H5 页面的原型出来了吗？',
-    time: '14:30',
-    avatar: 'https://i.pravatar.cc/150?img=12',
-    unread: 5,
-    muted: true,
-    type: 'group'
-  },
-  {
-    id: 2,
-    title: '系统通知',
-    lastMsg: '您的账号在异地登录，请注意安全。',
-    time: '12:05',
-    avatar: 'https://i.pravatar.cc/150?img=1',
-    unread: 'dot',
-    muted: false,
-    type: 'system'
-  },
-  {
-    id: 3,
-    title: '微信支付',
-    lastMsg: '付款成功：23.50元',
-    time: '昨天',
-    avatar: 'https://i.pravatar.cc/150?img=5',
-    unread: 0,
-    muted: false,
-    type: 'service'
-  },
-  {
-    id: 4,
-    title: '张小凡',
-    lastMsg: '今晚一起火锅吗？',
-    time: '昨天',
-    avatar: 'https://i.pravatar.cc/150?u=a042581f4e29026704d',
-    unread: 0,
-    muted: false,
-    type: 'user'
+const actionSheetActions = computed(() => {
+  if (!selectedSession.value) return []
+  const isTop = selectedSession.value.topStatus === 1
+  return [
+    { label: isTop ? '取消置顶' : '置顶聊天', value: 'top' },
+    { label: '删除会话', value: 'delete', theme: 'danger' },
+  ]
+})
+
+const filteredSessions = computed(() => {
+  const keyword = searchKeyword.value.trim().toLowerCase()
+  if (!keyword) return sessions.value
+  return sessions.value.filter(
+    (s) =>
+      (s.name && s.name.toLowerCase().includes(keyword)) ||
+      (s.lastMessage && s.lastMessage.toLowerCase().includes(keyword))
+  )
+})
+
+/** 格式化时间显示 */
+function formatTime(time?: string): string {
+  if (!time) return ''
+  const date = new Date(time)
+  const now = new Date()
+  const isToday =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate()
+
+  if (isToday) {
+    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
   }
-]);
 
-const goToChat = (chat: any) => {
+  const yesterday = new Date(now)
+  yesterday.setDate(yesterday.getDate() - 1)
+  const isYesterday =
+    date.getFullYear() === yesterday.getFullYear() &&
+    date.getMonth() === yesterday.getMonth() &&
+    date.getDate() === yesterday.getDate()
+
+  if (isYesterday) return '昨天'
+
+  return `${date.getMonth() + 1}/${date.getDate()}`
+}
+
+/** 加载会话列表 */
+async function loadSessions() {
+  loading.value = true
+  try {
+    const res = await chatApi.chatSessionController.listMySessions()
+    if (res.data) {
+      sessions.value = res.data.sort((a, b) => {
+        // 置顶优先
+        if (a.topStatus === 1 && b.topStatus !== 1) return -1
+        if (a.topStatus !== 1 && b.topStatus === 1) return 1
+        // 按活跃时间倒序
+        const timeA = a.activeTime ? new Date(a.activeTime).getTime() : 0
+        const timeB = b.activeTime ? new Date(b.activeTime).getTime() : 0
+        return timeB - timeA
+      })
+    }
+  } catch (e) {
+    console.error('加载会话列表失败', e)
+  } finally {
+    loading.value = false
+  }
+}
+
+/** 下拉刷新 */
+async function onRefresh() {
+  refreshing.value = true
+  await loadSessions()
+  refreshing.value = false
+}
+
+/** 进入聊天页面 */
+function goToChat(session: ChatAPI.ChatSessionVO) {
   uni.navigateTo({
-    url: `/pages/chat/index?id=${chat.id}&name=${chat.title}`
-  });
-};
+    url: `/pages/chat/index?roomId=${session.roomId}&name=${encodeURIComponent(session.name || '')}`,
+  })
+}
+
+/** 长按弹出操作菜单 */
+function onLongPress(session: ChatAPI.ChatSessionVO) {
+  selectedSession.value = session
+  showActionSheet.value = true
+}
+
+/** 操作菜单选择 */
+async function onActionSelected(action: { value: string }) {
+  if (!selectedSession.value) return
+  const session = selectedSession.value
+
+  if (action.value === 'top') {
+    try {
+      const newStatus = session.topStatus === 1 ? 0 : 1
+      await chatApi.chatSessionController.topSession({
+        roomId: session.roomId!,
+        status: newStatus,
+      })
+      session.topStatus = newStatus
+      uni.showToast({ title: newStatus === 1 ? '已置顶' : '已取消置顶', icon: 'none' })
+    } catch (e) {
+      console.error('置顶操作失败', e)
+    }
+  } else if (action.value === 'delete') {
+    uni.showModal({
+      title: '提示',
+      content: '确定删除该会话吗？',
+      success: async (res) => {
+        if (res.confirm) {
+          try {
+            await chatApi.chatSessionController.deleteSession({ id: session.roomId! })
+            sessions.value = sessions.value.filter((s) => s.roomId !== session.roomId)
+            uni.showToast({ title: '已删除', icon: 'none' })
+          } catch (e) {
+            console.error('删除会话失败', e)
+          }
+        }
+      },
+    })
+  }
+
+  showActionSheet.value = false
+  selectedSession.value = null
+}
+
+/** 监听 WebSocket 新消息 */
+function handleWsMessage(msg: any) {
+  // 收到新消息时刷新会话列表
+  loadSessions()
+}
+
+onMounted(() => {
+  loadSessions()
+  // 注册 WebSocket 消息监听
+  wsManager.on(WsMessageType.MESSAGE, handleWsMessage)
+})
+
+onShow(() => {
+  // 每次显示页面时刷新列表
+  loadSessions()
+})
 </script>
 
 <style scoped>
@@ -168,6 +294,26 @@ const goToChat = (chat: any) => {
   font-size: 24rpx;
   color: var(--app-text-secondary);
   margin-bottom: 8rpx;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 200rpx 0;
+}
+
+.empty-text {
+  margin-top: 20rpx;
+  font-size: 28rpx;
+  color: #ccc;
+}
+
+.loading-state {
+  display: flex;
+  justify-content: center;
+  padding: 40rpx 0;
 }
 
 .safe-area-bottom {
